@@ -5,6 +5,7 @@ import sklearn
 import scipy.sparse
 import numpy as np
 import os, time, collections, shutil
+import time
 
 
 #NFEATURES = 28**2
@@ -18,8 +19,84 @@ class base_model(object):
     
     def __init__(self):
         self.regularizers = []
+        self.num_labels_per_image = 1
     
     # High-level interface which runs the constructed computational graph.
+
+    def evaluation_results(self, predictions, labels, label_probability):
+        N = predictions.shape[0]
+        if len(labels.shape) is 2:
+            F_last = labels.shape[1]
+        else:
+            F_last = 1
+            labels = labels.reshape((labels.shape[0],1))
+
+        PR = np.zeros(shape=(F_last,2))
+
+        for i in range(F_last):
+            m1 = np.sum(labels[:,i])
+            m2 = np.sum(predictions[:,i])
+            m3 = np.sum(np.multiply(labels[:,i], predictions[:,i]))
+
+            if m1>0 and m2>0 and m3>0:
+                PR[i,0] = float(m3)/float(m2)
+                PR[i,1] = float(m3)/float(m1)
+        mPR = np.mean(PR, axis=0)
+        precision = mPR[0]
+        recall = mPR[1]
+        f_measure = (2*precision*recall)/(precision+recall)
+
+        #print("{} {} {}".format(precision, recall, f_measure))
+        #time.sleep(5)
+
+        mAP = np.zeros(shape=(F_last,1))
+
+        for i in range(F_last):
+            ground_truth = labels[:,i]
+            prob = label_probability[:,i]
+            pred = predictions[:,i]
+
+            ind = np.argsort(prob)[::-1]    #Descending sort
+            TP = 0
+            count = 0
+            sum_so_far = 0.0
+
+            for j in range(len(prob)):
+                idx = ind[j]
+                if ground_truth[idx] and pred[idx]:
+                    TP += 1
+                count+=1
+                sum_so_far += (float(TP)/float(count))
+
+            if np.sum(ground_truth) is 0:
+                mAP[i] = 0
+            else:
+                mAP[i] = float(sum_so_far)/float(np.sum(ground_truth))
+
+        MAP = np.zeros(shape=(N,1))
+
+        for i in range(N):
+            ground_truth = labels[i,:]
+            prob = label_probability[i,:]
+            pred = predictions[i,:]
+            ind = np.argsort(prob)[::-1]    #Descending sort
+            TP = 0
+            count = 0
+            sum_so_far = 0.0
+
+            for j in range(len(prob)):
+                idx = ind[j]
+                if ground_truth[idx] and pred[idx]:
+                    TP += 1
+                count+=1
+                sum_so_far += (float(TP)/float(count))
+
+            if np.sum(ground_truth) is 0:
+                MAP[i] = 0
+            else:
+                MAP[i] = float(sum_so_far)/float(np.sum(ground_truth))
+
+        return precision, recall, f_measure, mAP, MAP
     
     def predict(self, data, labels=None, sess=None):
         loss = 0
@@ -75,19 +152,30 @@ class base_model(object):
             F_last: Multilabel Problem (= #of classes)
         """
         t_process, t_wall = time.process_time(), time.time()
-        predictions, loss = self.predict(data, labels, sess)
-        #print(predictions)
+        label_probability, loss = self.predict(data, labels, sess)
         #evaluation metrics -- f1, precision, recall...
-        labels = np.argmax(labels, axis=1)
-        predictions =  np.argmax(predictions, axis= 1)
-        ncorrects = np.sum(predictions == labels)
-        accuracy = 100 * sklearn.metrics.accuracy_score(labels, predictions)
-        f1 = 0 #100 * sklearn.metrics.f1_score(labels, predictions, average='weighted')
-        string = 'accuracy: {:.2f} ({:d} / {:d}), f1 (weighted): {:.2f}, loss: {:.2e}'.format(
-                accuracy, ncorrects, labels.shape[0], f1, loss)
+        
+        gt = np.argmax(labels, axis=1)
+        pt = np.argmax(label_probability, axis= 1)
+        accuracy = 100 * sklearn.metrics.accuracy_score(gt, pt)
+        print("accuracy: {}".format(accuracy))
+
+        ind = label_probability.argsort()[:,-self.num_labels_per_image:][::-1] #get largest indices per image
+        temp = labels.argsort()[:,-self.num_labels_per_image][::-1]
+        predictions = np.zeros(label_probability.shape)
+
+        count = 0
+        for i in range(len(label_probability)):
+            predictions[i,[ind[i]]] = 1
+
+        #print("{} {}".format(label_probability.shape[0],count))
+        precision, recall, f_measure, mAP, MAP = self.evaluation_results(predictions, labels, label_probability)
+
+        string = 'precision: {:.2f}, recall : {:.2f}, f_measure: {:.2f}, mAP {:.2f}, MAP {:.2f}'.format(
+                precision, recall, f_measure, np.mean(mAP), np.mean(MAP))
         if sess is None:
             string += '\ntime: {:.0f}s (wall {:.0f}s)'.format(time.process_time()-t_process, time.time()-t_wall)
-        return string, accuracy, f1, loss
+        return string, precision, recall, f_measure, mAP, MAP
 
     def fit(self, train_data, train_labels, val_data, val_labels):
         t_process, t_wall = time.process_time(), time.time()
@@ -110,8 +198,11 @@ class base_model(object):
             val_labels = np.expand_dims(val_labels,1) # N * F(=1)
             
         # Training.
-        accuracies = []
-        losses = []
+        precisions = []
+        recalls=[]
+        f_measures=[]
+        mAPs=[]
+        MAPs=[]
         indices = collections.deque()
         num_steps = int(self.num_epochs * train_data.shape[0] / self.batch_size)
         for step in range(1, num_steps+1):
@@ -132,29 +223,34 @@ class base_model(object):
                 epoch = step * self.batch_size / train_data.shape[0]
                 print('step {} / {} (epoch {:.2f} / {}):'.format(step, num_steps, epoch, self.num_epochs))
                 print('  learning_rate = {:.2e}, loss_average = {:.2e}'.format(learning_rate, loss_average))
-                string, accuracy, f1, loss = self.evaluate(val_data, val_labels, sess)
-                accuracies.append(accuracy)
-                losses.append(loss)
+                string, precision, recall, f_measure, mAP, MAP = self.evaluate(val_data, val_labels, sess)
+                precisions.append(precision)
+                recalls.append(recall)
+                f_measures.append(f_measure)
+                mAPs.append(mAP)
+                MAPs.append(MAP)
                 print('  validation {}'.format(string))
                 print('  time: {:.0f}s (wall {:.0f}s)'.format(time.process_time()-t_process, time.time()-t_wall))
 
                 # Summaries for TensorBoard.
                 summary = tf.Summary()
                 summary.ParseFromString(sess.run(self.op_summary, feed_dict))
-                summary.value.add(tag='validation/accuracy', simple_value=accuracy)
-                summary.value.add(tag='validation/f1', simple_value=f1)
-                summary.value.add(tag='validation/loss', simple_value=loss)
+                summary.value.add(tag='validation/precision', simple_value=precision)
+                summary.value.add(tag='validation/recall', simple_value=recall)
+                summary.value.add(tag='validation/f_measure', simple_value=f_measure)
+                summary.value.add(tag='validation/mAP', simple_value=np.mean(mAP))
+                summary.value.add(tag='validation/MAP', simple_value=np.mean(MAP))
                 writer.add_summary(summary, step)
                 
                 # Save model parameters (for evaluation).
                 self.op_saver.save(sess, path, global_step=step)
 
-        print('validation accuracy: peak = {:.2f}, mean = {:.2f}'.format(max(accuracies), np.mean(accuracies[-10:])))
+        print('validation peaks: precision = {:.2f}, recall = {:.2f}, f_measure = {}, mAP = {}, MAP = {}'.format(max(precisions), max(recalls), max(f_measures), max(np.mean(mAPs, axis=1)), max(np.mean(MAPs, axis=1)) ))
         writer.close()
         sess.close()
         
         t_step = (time.time() - t_wall) / num_steps
-        return accuracies, losses, t_step
+        return np.mean(precisions), np.mean(recalls), np.mean(f_measures), np.mean(np.mean(mAPs, axis=1)), np.mean(np.mean(MAPs, axis=1))
 
     def get_var(self, name):
         sess = self._get_session()
@@ -219,9 +315,9 @@ class base_model(object):
         #"""Return the predicted classes."""
         """Return the predicted values."""
         with tf.name_scope('prediction'):
-            #prediction = tf.nn.softmax(logits)
-            #return prediction
-            return logits
+            prediction = tf.nn.softmax(logits)
+            return prediction
+            #return logits
 
     def loss(self, logits, labels, regularization):
         """Adds to the inference model the layers required to generate loss."""
