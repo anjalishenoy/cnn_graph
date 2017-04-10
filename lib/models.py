@@ -46,9 +46,6 @@ class base_model(object):
         recall = mPR[1]
         f_measure = (2*precision*recall)/(precision+recall)
 
-        #print("{} {} {}".format(precision, recall, f_measure))
-        #time.sleep(5)
-
         mAP = np.zeros(shape=(F_last,1))
 
         for i in range(F_last):
@@ -65,13 +62,14 @@ class base_model(object):
                 idx = ind[j]
                 if ground_truth[idx] and pred[idx]:
                     TP += 1
-                count+=1
-                sum_so_far += (float(TP)/float(count))
-
+                if ground_truth[idx]:
+                	count+=1
+                	sum_so_far += TP/count
+            
             if np.sum(ground_truth) is 0:
                 mAP[i] = 0
             else:
-                mAP[i] = float(sum_so_far)/float(np.sum(ground_truth))
+                mAP[i] = sum_so_far/np.sum(ground_truth)
 
         MAP = np.zeros(shape=(N,1))
 
@@ -88,13 +86,14 @@ class base_model(object):
                 idx = ind[j]
                 if ground_truth[idx] and pred[idx]:
                     TP += 1
-                count+=1
-                sum_so_far += (float(TP)/float(count))
+                if ground_truth[idx]:
+                	count+=1
+                	sum_so_far += TP/count
 
             if np.sum(ground_truth) is 0:
                 MAP[i] = 0
             else:
-                MAP[i] = float(sum_so_far)/float(np.sum(ground_truth))
+                MAP[i] = sum_so_far/np.sum(ground_truth)
 
         return precision, recall, f_measure, mAP, MAP
     
@@ -155,20 +154,13 @@ class base_model(object):
         label_probability, loss = self.predict(data, labels, sess)
         #evaluation metrics -- f1, precision, recall...
         
-        gt = np.argmax(labels, axis=1)
-        pt = np.argmax(label_probability, axis= 1)
-        accuracy = 100 * sklearn.metrics.accuracy_score(gt, pt)
-        print("accuracy: {}".format(accuracy))
-
-        ind = label_probability.argsort()[:,-self.num_labels_per_image:][::-1] #get largest indices per image
-        temp = labels.argsort()[:,-self.num_labels_per_image][::-1]
+        #ind = label_probability.argsort()[:,-self.num_labels_per_image:][::-1] #get largest indices per image
         predictions = np.zeros(label_probability.shape)
 
-        count = 0
         for i in range(len(label_probability)):
-            predictions[i,[ind[i]]] = 1
+            ind = label_probability[i].argsort()[-self.num_labels_per_image:][::-1]
+            predictions[i, [ind]]=1
 
-        #print("{} {}".format(label_probability.shape[0],count))
         precision, recall, f_measure, mAP, MAP = self.evaluation_results(predictions, labels, label_probability)
 
         string = 'precision: {:.2f}, recall : {:.2f}, f_measure: {:.2f}, mAP {:.2f}, MAP {:.2f}'.format(
