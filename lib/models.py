@@ -316,6 +316,10 @@ class base_model(object):
         with tf.name_scope('loss'):
             with tf.name_scope('cross_entropy'):
                 labels = tf.cast(labels,tf.float32)
+                for i in range(len(labels)):
+                	s = np.sum(labels[i])
+                	s = max(s,1)
+                	labels[i]=labels[i]/s
                 #cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)
                 # cross entopy loss for multilablel problem
                 cross_entropy = tf.reduce_sum(tf.multiply(labels, -tf.log(tf.nn.softmax(logits))), axis=1) 
