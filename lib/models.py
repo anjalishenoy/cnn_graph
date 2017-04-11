@@ -17,9 +17,9 @@ import time
 
 class base_model(object):
     
-    def __init__(self):
+    def __init__(self, num_labels_per_image):
         self.regularizers = []
-        self.num_labels_per_image = 1
+        self.num_labels_per_image = num_labels_per_image
     
     # High-level interface which runs the constructed computational graph.
 
@@ -316,14 +316,11 @@ class base_model(object):
         with tf.name_scope('loss'):
             with tf.name_scope('cross_entropy'):
                 labels = tf.cast(labels,tf.float32)
-                for i in range(len(labels)):
-                	s = np.sum(labels[i])
-                	s = max(s,1)
-                	labels[i]=labels[i]/s
                 #cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)
                 # cross entopy loss for multilablel problem
-                cross_entropy = tf.reduce_sum(tf.multiply(labels, -tf.log(tf.nn.softmax(logits))), axis=1) 
-                cross_entropy = tf.reduce_mean(cross_entropy)
+                cross_entropy = tf.nn.sigmoid_cross_entropy_with_logits(logits=logits, labels=labels)
+                #cross_entropy = tf.reduce_sum(tf.multiply(labels, -tf.log(tf.nn.softmax(logits))), axis=1) 
+                cross_entropy = tf.reduce_mean(tf.reduce_sum(cross_entropy, axis=1))
             with tf.name_scope('regularization'):
                 regularization *= tf.add_n(self.regularizers)
             loss = cross_entropy + regularization
@@ -408,8 +405,8 @@ class base_model(object):
 
 
 class fc1(base_model):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, num_labels_per_image):
+        super().__init__(num_labels_per_image)
     def _inference(self, x, dropout):
         W = self._weight_variable([NFEATURES, NCLASSES])
         b = self._bias_variable([NCLASSES])
@@ -417,8 +414,8 @@ class fc1(base_model):
         return y
 
 class fc2(base_model):
-    def __init__(self, nhiddens):
-        super().__init__()
+    def __init__(self, nhiddens, num_labels_per_image):
+        super().__init__(num_labels_per_image)
         self.nhiddens = nhiddens
     def _inference(self, x, dropout):
         with tf.name_scope('fc1'):
@@ -437,8 +434,8 @@ class fc2(base_model):
 
 class cnn2(base_model):
     """Simple convolutional model."""
-    def __init__(self, K, F):
-        super().__init__()
+    def __init__(self, K, num_labels_per_image, F):
+        super().__init__(num_labels_per_image)
         self.K = K  # Patch size
         self.F = F  # Number of features
     def _inference(self, x, dropout):
@@ -458,8 +455,8 @@ class cnn2(base_model):
 
 class fcnn2(base_model):
     """CNN using the FFT."""
-    def __init__(self, F):
-        super().__init__()
+    def __init__(self, F, num_labels_per_image):
+        super().__init__(num_labels_per_image)
         self.F = F  # Number of features
     def _inference(self, x, dropout):
         with tf.name_scope('conv1'):
@@ -501,8 +498,8 @@ class fcnn2(base_model):
 
 class fgcnn2(base_model):
     """Graph CNN with full weights, i.e. patch has the same size as input."""
-    def __init__(self, L, F):
-        super().__init__()
+    def __init__(self, L, num_labels_per_image, F):
+        super().__init__(num_labels_per_image)
         #self.L = L  # Graph Laplacian, NFEATURES x NFEATURES
         self.F = F  # Number of filters
         _, self.U = graph.fourier(L)
@@ -538,8 +535,8 @@ class fgcnn2(base_model):
 
 class lgcnn2_1(base_model):
     """Graph CNN which uses the Lanczos approximation."""
-    def __init__(self, L, F, K):
-        super().__init__()
+    def __init__(self, L, num_labels_per_image, F, K):
+        super().__init__(num_labels_per_image)
         self.L = L  # Graph Laplacian, M x M
         self.F = F  # Number of filters
         self.K = K  # Polynomial order, i.e. filter size (number of hopes)
@@ -567,8 +564,8 @@ class lgcnn2_1(base_model):
 
 class lgcnn2_2(base_model):
     """Graph CNN which uses the Lanczos approximation."""
-    def __init__(self, L, F, K):
-        super().__init__()
+    def __init__(self, L, num_labels_per_image, F, K):
+        super().__init__(num_labels_per_image)
         self.L = L  # Graph Laplacian, M x M
         self.F = F  # Number of filters
         self.K = K  # Polynomial order, i.e. filter size (number of hopes)
@@ -602,8 +599,8 @@ class lgcnn2_2(base_model):
 
 class cgcnn2_2(base_model):
     """Graph CNN which uses the Chebyshev approximation."""
-    def __init__(self, L, F, K):
-        super().__init__()
+    def __init__(self, L, num_labels_per_image, F, K):
+        super().__init__(num_labels_per_image)
         self.L = graph.rescale_L(L, lmax=2)  # Graph Laplacian, M x M
         self.F = F  # Number of filters
         self.K = K  # Polynomial order, i.e. filter size (number of hopes)
@@ -637,8 +634,8 @@ class cgcnn2_2(base_model):
 
 class cgcnn2_3(base_model):
     """Graph CNN which uses the Chebyshev approximation."""
-    def __init__(self, L, F, K):
-        super().__init__()
+    def __init__(self, L, num_labels_per_image, F, K):
+        super().__init__(num_labels_per_image)
         L = graph.rescale_L(L, lmax=2)  # Graph Laplacian, M x M
         self.L = L.toarray()
         self.F = F  # Number of filters
@@ -678,8 +675,8 @@ class cgcnn2_3(base_model):
 
 class cgcnn2_4(base_model):
     """Graph CNN which uses the Chebyshev approximation."""
-    def __init__(self, L, F, K):
-        super().__init__()
+    def __init__(self, num_labels_per_image, L, F, K):
+        super().__init__(num_labels_per_image)
         L = graph.rescale_L(L, lmax=2)  # Graph Laplacian, M x M
         L = L.tocoo()
         data = L.data
@@ -726,8 +723,8 @@ class cgcnn2_4(base_model):
 
 class cgcnn2_5(base_model):
     """Graph CNN which uses the Chebyshev approximation."""
-    def __init__(self, L, F, K):
-        super().__init__()
+    def __init__(self, L, num_labels_per_image, F, K):
+        super().__init__(num_labels_per_image)
         L = graph.rescale_L(L, lmax=2)  # Graph Laplacian, M x M
         L = L.tocoo()
         data = L.data
@@ -856,11 +853,11 @@ class cgcnn(base_model):
     Directories:
         dir_name: Name for directories (summaries and model parameters).
     """
-    def __init__(self, L, F, F_0, K, p, M, filter='chebyshev5', brelu='b1relu', pool='mpool1',
+    def __init__(self, L, num_labels_per_image, F, F_0, K, p, M, filter='chebyshev5', brelu='b1relu', pool='mpool1',
                 num_epochs=20, learning_rate=0.1, decay_rate=0.95, decay_steps=None, momentum=0.9,
                 regularization=0, dropout=0, batch_size=100, eval_frequency=200,
                 dir_name=''):
-        super().__init__()
+        super().__init__(num_labels_per_image)
         
         # Verify the consistency w.r.t. the number of layers.
         assert len(L) >= len(F) == len(K) == len(p)
